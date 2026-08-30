@@ -43,8 +43,9 @@ type Manifest struct {
 }
 
 // Metrics records both the manifest denominator and the source inventory.
-// README.md at the observed root is intentionally absent from inventory
-// counters, while it remains a normal manifest entry.
+// README.md at the observed root and the exact root manifest output are
+// intentionally absent from inventory counters; README.md remains a normal
+// manifest entry.
 type Metrics struct {
 	ExactFileDenominator int   `json:"exact_file_denominator"`
 	ManifestEntries      int   `json:"manifest_entries"`
@@ -171,7 +172,7 @@ func Observe(root string) (Observation, error) {
 			result.Manifest.Entries = append(result.Manifest.Entries, Entry{Path: relative, Size: size, SHA256: digest})
 		}
 
-		if relative == RootReadmePath {
+		if relative == RootManifestPath || relative == RootReadmePath {
 			return nil
 		}
 		result.Metrics.InputFiles++
