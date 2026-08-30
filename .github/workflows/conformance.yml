@@ -1,0 +1,186 @@
+name: Canonical artifact manifest conformance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: artifact-manifest-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE: examples/artifact-manifest/main.gooo
+      DENOMINATOR: contracts/manifest-denominator-v1.json
+      LOCK: contracts/compiler-release-lock-v1.json
+      SUBJECT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SUBJECT_SHA }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.0'
+
+      - name: Bind exact checkout and Go version
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SUBJECT_SHA"
+          test "$(go env GOVERSION)" = "go1.27.0"
+
+      - name: Acquire digest-locked released compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository=$(jq -r '.repository' "$LOCK")
+          tag=$(jq -r '.tag' "$LOCK")
+          tag_object=$(jq -r '.tag_object_sha' "$LOCK")
+          target=$(jq -r '.target_commit_sha' "$LOCK")
+          asset=$(jq -r '.asset.name' "$LOCK")
+          digest=$(jq -r '.asset.sha256' "$LOCK")
+          gh api "repos/$repository/git/ref/tags/$tag" > "$RUNNER_TEMP/compiler-ref.json"
+          jq -e --arg sha "$tag_object" '.object.type == "tag" and .object.sha == $sha' "$RUNNER_TEMP/compiler-ref.json" >/dev/null
+          gh api "repos/$repository/git/tags/$tag_object" > "$RUNNER_TEMP/compiler-tag.json"
+          jq -e --arg sha "$target" '.object.type == "commit" and .object.sha == $sha' "$RUNNER_TEMP/compiler-tag.json" >/dev/null
+          gh api "repos/$repository/releases/tags/$tag" > "$RUNNER_TEMP/compiler-release.json"
+          asset_id=$(jq -r --arg name "$asset" '.assets[] | select(.name == $name) | .id' "$RUNNER_TEMP/compiler-release.json")
+          test -n "$asset_id" && test "$asset_id" != "null"
+          gh api -H 'Accept: application/octet-stream' "repos/$repository/releases/assets/$asset_id" > "$RUNNER_TEMP/$asset"
+          printf '%s  %s\n' "$digest" "$RUNNER_TEMP/$asset" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gooo"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/gooo"
+          test -x "$RUNNER_TEMP/gooo/gooo"
+          "$RUNNER_TEMP/gooo/gooo" version > "$RUNNER_TEMP/compiler-version.txt"
+
+      - name: Resolve the 12 semantic activities through released Gooo
+        shell: bash
+        run: |
+          set -euo pipefail
+          gooo="$RUNNER_TEMP/gooo/gooo"
+          "$gooo" check --json "$SOURCE" > "$RUNNER_TEMP/syntax.json"
+          "$gooo" check --semantic --json "$SOURCE" > "$RUNNER_TEMP/semantic.json"
+          "$gooo" graph dump "$SOURCE" > "$RUNNER_TEMP/graph.json"
+          jq -e '.status == "ok"' "$RUNNER_TEMP/syntax.json" "$RUNNER_TEMP/semantic.json" >/dev/null
+          jq -e '.schema_version == "gooo-graph/v1" and ([.nodes[] | select(.kind == "Activity")] | length) == 12' "$RUNNER_TEMP/graph.json" >/dev/null
+          mkdir -p "$RUNNER_TEMP/resolutions"
+          while IFS=$'\t' read -r ordinal activity; do
+            receipt="$RUNNER_TEMP/resolutions/$(printf '%02d' "$ordinal")-$activity.json"
+            "$gooo" graph resolve-activity "$SOURCE" --name "$activity" > "$receipt"
+            jq -e --arg activity "$activity" '.schema == "gooo/activity-cardinality-resolution/v1" and .selector.name == $activity and .decision == "CLOSED" and .occurrences == 1 and .claim.state == "CLOSED"' "$receipt" >/dev/null
+          done < <(jq -r '.cells[] | [.ordinal, .activity] | @tsv' "$DENOMINATOR")
+          jq -S -s '.' "$RUNNER_TEMP/resolutions"/*.json > "$RUNNER_TEMP/activity-resolutions.json"
+
+      - name: Regenerate the Go projection twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          gooo="$RUNNER_TEMP/gooo/gooo"
+          mkdir -p "$RUNNER_TEMP/generated-a" "$RUNNER_TEMP/generated-b"
+          "$gooo" generate "$SOURCE" --out "$RUNNER_TEMP/generated-a"
+          "$gooo" generate "$SOURCE" --out "$RUNNER_TEMP/generated-b"
+          cmp -s "$RUNNER_TEMP/generated-a/semantic.gooo.go" "$RUNNER_TEMP/generated-b/semantic.gooo.go"
+          test -s "$RUNNER_TEMP/generated-a/semantic.gooo.go"
+          grep -Fq '//gooo:generated:start' "$RUNNER_TEMP/generated-a/semantic.gooo.go"
+          grep -Fq '//gooo:slot:start' "$RUNNER_TEMP/generated-a/semantic.gooo.go"
+
+      - name: Test the Go runtime and emit the canonical receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./...
+          go vet ./...
+          start_ns=$(date +%s%N)
+          /usr/bin/time -f '%M' -o "$RUNNER_TEMP/runtime-rss" \
+            go run ./cmd/artifact-manifest -mode conformance -input fixtures/conformance/input -output "$RUNNER_TEMP/report.json"
+          end_ns=$(date +%s%N)
+          echo $(( (end_ns - start_ns) / 1000000 )) > "$RUNNER_TEMP/runtime-wall-ms"
+          test -s "$RUNNER_TEMP/report.json"
+
+      - name: Assert exact denominator, states, and read-only boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '
+            .schema == "gooo/artifact-manifest/v1" and
+            .contract == "gooo/artifact-manifest/denominator/v1" and
+            .decision == "REFUTED" and
+            .claim.state == "REFUTED" and
+            .summary.total == 12 and .summary.closed == 4 and .summary.unknown == 3 and .summary.refuted == 5 and
+            .summary.exact_file_denominator == 6 and .summary.manifest_entries == 6 and .summary.mismatches == 1 and
+            (.cells | length) == 12 and .meta_activity_bindings == 12 and
+            (.cells | map(select(.proof_choice == "FOUNDATION")) | length) == 4 and
+            (.cells | map(select(.proof_choice == "COHERENCE")) | length) == 4 and
+            (.cells | map(select(.proof_choice == "REGRESSION")) | length) == 4 and
+            (.cells | map(select(.indicator_class == "DRIVER")) | length) == 4 and
+            (.cells | map(select(.indicator_class == "OUTCOME")) | length) == 4 and
+            (.cells | map(select(.indicator_class == "GUARDRAIL")) | length) == 4 and
+            ([.cells[] | select(.id == "NORMAL_MANIFEST" and .state == "CLOSED") ] | length) == 1 and
+            ([.cells[] | select(.id == "DETERMINISTIC_REPLAY" and .state == "CLOSED") ] | length) == 1 and
+            ([.cells[] | select(.id == "NESTED_MANIFESTS_PRESERVED" and .state == "CLOSED") ] | length) == 1 and
+            ([.cells[] | select(.id == "EXACT_ROOT_OUTPUT_EXCLUSION" and .state == "CLOSED") ] | length) == 1 and
+            ([.cells[] | select(.id == "MISSING_INPUT" and .state == "UNKNOWN") ] | length) == 1 and
+            ([.cells[] | select(.id == "STALE_INPUT" and .state == "UNKNOWN") ] | length) == 1 and
+            ([.cells[] | select(.id == "DUPLICATE_OR_COLLISION" and .state == "REFUTED") ] | length) == 1 and
+            ([.cells[] | select(.id == "PATH_TRAVERSAL" and .state == "REFUTED") ] | length) == 1 and
+            ([.cells[] | select(.id == "MANIFEST_LAUNDERING" and .state == "REFUTED") ] | length) == 1 and
+            ([.cells[] | select(.id == "MIXED_FAILURE" and .state == "REFUTED") ] | length) == 1 and
+            ([.cells[] | select(.id == "REPOSITORY_WRITE_ESCALATION" and .state == "REFUTED") ] | length) == 1 and
+            ([.cells[] | select(.id == "IMPROVEMENT_EXTERNAL_UTILITY" and .state == "UNKNOWN") ] | length) == 1 and
+            ([.cells[] | select(.state == "UNKNOWN" and .stage != null and .step != null and .reason != "" and .unknown_class != null and .next_operation != "" and (.blocked_by | length) > 0)] | length) == 3 and
+            (.manifest.excluded_paths == ["manifest.json"]) and
+            ([.manifest.entries[] | select(.path == "manifest.json")] | length) == 0 and
+            ([.manifest.entries[] | select(.path == "producer/alpha/manifest.json")] | length) == 1 and
+            .metrics.root_readme_excluded == true and .metrics.input_files == 5 and .metrics.input_directories == 3 and
+            .metrics.physical_lines == 10 and .metrics.go_files == 1 and .metrics.go_lines == 3 and
+            .metrics.gooo_files == 1 and .metrics.gooo_lines == 4 and
+            .runtime.repository_writes == 0 and .runtime.local_test_executions == 0 and .runtime.cross_project_required_gates == 0 and
+            .improvement.state == "UNKNOWN" and .external_utility.state == "UNKNOWN"
+          ' "$RUNNER_TEMP/report.json" >/dev/null
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Publish receipt summary
+        shell: bash
+        run: |
+          {
+            echo '## Canonical artifact manifest'
+            echo
+            jq -r '
+              "- decision: \(.decision)",
+              "- cells: \(.summary.closed)/\(.summary.total) CLOSED; \(.summary.unknown) UNKNOWN; \(.summary.refuted) REFUTED",
+              "- exact files / manifest entries / mismatches: \(.summary.exact_file_denominator) / \(.summary.manifest_entries) / \(.summary.mismatches)",
+              "- input files / directories / physical lines: \(.metrics.input_files) / \(.metrics.input_directories) / \(.metrics.physical_lines)",
+              "- Go files / lines; Gooo files / lines: \(.metrics.go_files) / \(.metrics.go_lines); \(.metrics.gooo_files) / \(.metrics.gooo_lines)",
+              "- repository writes / local tests / cross-project gates: \(.runtime.repository_writes) / \(.runtime.local_test_executions) / \(.runtime.cross_project_required_gates)",
+              "- wall time / peak RSS: \(.summary.wall_ms) ms / \(.summary.peak_rss_kib) KiB"
+            ' "$RUNNER_TEMP/report.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload conformance evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifact-manifest-conformance-${{ env.SUBJECT_SHA }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/compiler-ref.json
+            ${{ runner.temp }}/compiler-tag.json
+            ${{ runner.temp }}/compiler-release.json
+            ${{ runner.temp }}/compiler-version.txt
+            ${{ runner.temp }}/syntax.json
+            ${{ runner.temp }}/semantic.json
+            ${{ runner.temp }}/graph.json
+            ${{ runner.temp }}/activity-resolutions.json
+            ${{ runner.temp }}/generated-a/semantic.gooo.go
+            ${{ runner.temp }}/generated-b/semantic.gooo.go
+            ${{ runner.temp }}/report.json
+            ${{ runner.temp }}/runtime-rss
+            ${{ runner.temp }}/runtime-wall-ms

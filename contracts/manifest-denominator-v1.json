@@ -1,0 +1,53 @@
+{
+  "schema": "gooo/artifact-manifest/denominator/v1",
+  "candidate_id": "gooo.product.artifact-manifest.v1",
+  "total": 12,
+  "unknown_fields": [
+    "stage",
+    "step",
+    "reason",
+    "unknown_class",
+    "next_operation",
+    "blocked_by"
+  ],
+  "refuted_precedence": true,
+  "excluded_relative_paths": ["manifest.json"],
+  "metrics": [
+    "exact_file_denominator",
+    "manifest_entries",
+    "mismatches",
+    "wall_ms",
+    "peak_rss_kib",
+    "input_files",
+    "input_directories",
+    "physical_lines",
+    "go_files",
+    "go_lines",
+    "gooo_files",
+    "gooo_lines"
+  ],
+  "proofs": [
+    {"choice": "FOUNDATION", "total": 4},
+    {"choice": "COHERENCE", "total": 4},
+    {"choice": "REGRESSION", "total": 4}
+  ],
+  "indicator_classes": [
+    {"class": "DRIVER", "total": 4},
+    {"class": "OUTCOME", "total": 4},
+    {"class": "GUARDRAIL", "total": 4}
+  ],
+  "cells": [
+    {"ordinal": 1, "id": "NORMAL_MANIFEST", "activity": "ObserveNormalManifest", "proof_choice": "FOUNDATION", "indicator_class": "DRIVER"},
+    {"ordinal": 2, "id": "DETERMINISTIC_REPLAY", "activity": "ReplayManifestDeterministically", "proof_choice": "FOUNDATION", "indicator_class": "OUTCOME"},
+    {"ordinal": 3, "id": "NESTED_MANIFESTS_PRESERVED", "activity": "PreserveNestedProducerManifests", "proof_choice": "FOUNDATION", "indicator_class": "GUARDRAIL"},
+    {"ordinal": 4, "id": "EXACT_ROOT_OUTPUT_EXCLUSION", "activity": "ExcludeExactRootOutput", "proof_choice": "FOUNDATION", "indicator_class": "DRIVER"},
+    {"ordinal": 5, "id": "MISSING_INPUT", "activity": "PreserveMissingInputUnknown", "proof_choice": "COHERENCE", "indicator_class": "OUTCOME"},
+    {"ordinal": 6, "id": "STALE_INPUT", "activity": "PreserveStaleInputUnknown", "proof_choice": "COHERENCE", "indicator_class": "DRIVER"},
+    {"ordinal": 7, "id": "DUPLICATE_OR_COLLISION", "activity": "RefuteDuplicateAndCollision", "proof_choice": "COHERENCE", "indicator_class": "GUARDRAIL"},
+    {"ordinal": 8, "id": "PATH_TRAVERSAL", "activity": "RefutePathTraversal", "proof_choice": "COHERENCE", "indicator_class": "OUTCOME"},
+    {"ordinal": 9, "id": "MANIFEST_LAUNDERING", "activity": "RefuteManifestLaundering", "proof_choice": "REGRESSION", "indicator_class": "GUARDRAIL"},
+    {"ordinal": 10, "id": "MIXED_FAILURE", "activity": "RefuteMixedFailure", "proof_choice": "REGRESSION", "indicator_class": "DRIVER"},
+    {"ordinal": 11, "id": "REPOSITORY_WRITE_ESCALATION", "activity": "RefuteRepositoryWriteEscalation", "proof_choice": "REGRESSION", "indicator_class": "OUTCOME"},
+    {"ordinal": 12, "id": "IMPROVEMENT_EXTERNAL_UTILITY", "activity": "PreserveImprovementAndExternalUtilityUnknown", "proof_choice": "REGRESSION", "indicator_class": "GUARDRAIL"}
+  ]
+}
