@@ -1,0 +1,18 @@
+package artifactmanifest
+namespace artifactmanifest
+
+entity ActivityInput id "gooo://artifact-manifest/entity/activity-input"
+entity ActivityResult id "gooo://artifact-manifest/entity/activity-result"
+
+activity ObserveNormalManifest(ActivityInput) -> ActivityResult
+activity ReplayManifestDeterministically(ActivityInput) -> ActivityResult
+activity PreserveNestedProducerManifests(ActivityInput) -> ActivityResult
+activity ExcludeExactRootOutput(ActivityInput) -> ActivityResult
+activity PreserveMissingInputUnknown(ActivityInput) -> ActivityResult
+activity PreserveStaleInputUnknown(ActivityInput) -> ActivityResult
+activity RefuteDuplicateAndCollision(ActivityInput) -> ActivityResult
+activity RefutePathTraversal(ActivityInput) -> ActivityResult
+activity RefuteManifestLaundering(ActivityInput) -> ActivityResult
+activity RefuteMixedFailure(ActivityInput) -> ActivityResult
+activity RefuteRepositoryWriteEscalation(ActivityInput) -> ActivityResult
+activity PreserveImprovementAndExternalUtilityUnknown(ActivityInput) -> ActivityResult
