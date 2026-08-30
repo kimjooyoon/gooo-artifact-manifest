@@ -223,7 +223,7 @@ func missingInputClaim() Claim {
 	}
 	defer os.RemoveAll(parent)
 	missing := filepath.Join(parent, "missing")
-	_, err := Observe(missing)
+	_, err = Observe(missing)
 	if err == nil {
 		return refutedClaim("EVIDENCE", "CHECK_MISSING_INPUT", "MISSING_INPUT_NOT_UNKNOWN", "PRESERVE_MISSING_INPUT_UNKNOWN")
 	}
